@@ -49,7 +49,7 @@ readTargetCSV(filePath) {
     try
         contentsRaw := FileRead(filePath)
     catch Error as FNF{
-        filePath := FileSelect()
+        filePath := A_ScriptDir . "\src\default-load-directory\replace-me.txt"
         contentsRaw := FileRead(filePath)
     }
     fileName := filePath
