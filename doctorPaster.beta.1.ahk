@@ -800,7 +800,6 @@ handleTreeViewDoubleClick(treeView) {
     navigateTreeView(direction) {
         treeView := this.dpasteGui["DirView"]
         currentSelection := treeView.GetSelection()
-        currentSelectionText := StrReplace(treeView.GetText(currentSelection),"> ","",,,1)
         ; Remove ">" from current selection text
         ; If no selection, start at the first or last item
         if (!currentSelection) {
@@ -825,6 +824,7 @@ handleTreeViewDoubleClick(treeView) {
             }
             return
         }
+        currentSelectionText := StrReplace(treeView.GetText(currentSelection),"> ","",,,1)
         
         ; Move up or down based on the direction
         if (direction > 0) {
