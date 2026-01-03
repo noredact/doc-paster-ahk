@@ -1610,6 +1610,11 @@ NumpadDiv::
 MainGui.settingsToggle()
 }
 
+^NumpadDiv::
+{
+MainGui.toggleMinimalMode
+}
+
 NumpadMult::
 {
     Suspend
