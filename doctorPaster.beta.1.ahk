@@ -262,7 +262,11 @@ class drPaster {
     __New() {
         this.dpasteGui := Gui()
         this.filePath := loadLastFile == 1 ? filePath : FileSelect()
-        this.curFile := readTargetCSV(filePath)
+        ; If user cancels FileSelect() and no file selected, fall back to the ini default
+        if (!this.filePath || this.filePath = "") {
+            this.filePath := filePath
+        }
+        this.curFile := readTargetCSV(this.filePath)
         this.fileName := this.curFile.name
         this.lastPos := loadLastPos == 1 ? lastPosition : 0
         this.winTransparency := loadViewSettings == 1 ? windowTransparency : 255
