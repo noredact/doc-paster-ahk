@@ -8,15 +8,7 @@ If !(A_IsCompiled)
     
 /*
 *******
-TODO
-- Use ctrl + / for minimal mode toggle
-- - When user first enables minimal mode, store location
-- - If user uses hotkey, return to stored location
-- - If user clicks button, assume user wants new location, store new location
-- - Add location to ini file.
 KNOWN ISSUES
-- Adjusting the increment amount disables the button to shift left
-- - Not a high priority, program intends user to use numberpad to perform this function
 - Smart apostrophes don't render correctly, some type of encoding issue
 *******
 */ 
@@ -38,6 +30,10 @@ textScroll := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "textS
 windowTransparency := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "windowTransparency", "255")
 lastWinPos := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "lastWinPos", "x0 y0")
 showSettings := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "showSettings", "0")
+
+; Minimal tooltip stored position
+minimalTooltipX := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipX", "")
+minimalTooltipY := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipY", "")
 
 ; Global function for reading target CSV file
 readTargetCSV(filePath) {
@@ -252,6 +248,13 @@ class drPaster {
     isMinimalMode := false  ; Track minimal mode state
     originalGuiSize := {w: 0, h: 0}  ; Store original GUI dimensions
     minimalTooltip := ""   ; Store tooltip handle
+    tooltipLineLimit := 80   ; Max characters per line in minimal tooltip to avoid overly wide tooltips
+    guiHiddenBySuspend := false ; Track if GUI was hidden due to suspend
+    suspendTooltipActive := false ; Track if suspend tooltip is shown
+    suspendTooltipWidth := 420 ; Width of suspended tooltip for hit detection
+    suspendTooltipHeight := 160 ; Height of suspended tooltip for hit detection
+    suspendTooltipX := 0
+    suspendTooltipY := 0
     prevShiftUD := 1
 
 
@@ -328,6 +331,19 @@ class drPaster {
         
         ;load settings
         this.loadSettings()
+
+        ; Load saved minimal tooltip position if available
+        savedX := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipX", "")
+        savedY := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipY", "")
+        if (savedX != "" && savedY != "") {
+            this.tooltipX := Integer(savedX)
+            this.tooltipY := Integer(savedY)
+            this.minimalTooltipSaved := true
+        } else {
+            this.tooltipX := 0
+            this.tooltipY := 0
+            this.minimalTooltipSaved := false
+        }
 
         this.dpasteGui.Show(this.winPos)
         this.dpasteGui.Opt("+AlwaysOnTop")
@@ -474,7 +490,7 @@ class drPaster {
         viewSettingsCb.OnEvent("Click", (*) => this.handleOptionChange("textScroll"))
 
         ; Add minimal mode toggle button
-        minimalModeBtn := this.dpasteGui.Add("Button", "xs+5 y+5 w160 h20 vminimalModeBtn", "Toggle Minimal Mode")
+        minimalModeBtn := this.dpasteGui.Add("Button", "xs+5 y+5 w160 h20 vminimalModeBtn", "Toggle Minimal Mode (Ctrl+/)")
         minimalModeBtn.OnEvent("Click", (*) => this.toggleMinimalMode())
     }
 
@@ -657,6 +673,7 @@ handleTreeViewDoubleClick(treeView) {
         Numpad Add (+): Move down in the directory view
         Numpad Sub (-): Move up in the directory view
         Numpad Div (/): Show/hide options panel
+        Ctrl + Numpad Div (/): Show/hide minimal mode
         Ctrl + O: Open file dialog
         Ctrl + J: Open jump position dialog
         Ctrl + Numpad Add (+): Increase window opacity
@@ -1011,57 +1028,67 @@ handleTreeViewDoubleClick(treeView) {
         }
     }
 
-    toggleMinimalMode() {
+    toggleMinimalMode(fromHotkey := false) {
         if (!this.isMinimalMode) {
-            ; Hide the main GUI and start position selection mode
+            ; Hide the main GUI
             this.dpasteGui.Hide()
-            
-            ; Store the timer function
-            this.positionTimer := ObjBindMethod(this, "showPositionTooltip")
-            
-            ; Start the instruction tooltip that follows mouse
-            SetTimer(this.positionTimer, 10)
-            
-            ; Wait for click and get position
-            KeyWait "LButton", "D"
-            
-            ; Clear the instruction tooltip and timer
-            SetTimer(this.positionTimer, 0)
-            ToolTip
-            
-            ; Get the clicked position
-            CoordMode("Mouse", "Screen")
-            MouseGetPos(&clickX, &clickY)
-            
+
+            ; If invoked from hotkey and a saved position exists, use it
+            savedX := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipX", "")
+            savedY := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipY", "")
+            if (fromHotkey && savedX != "" && savedY != "") {
+                this.tooltipX := Integer(savedX)
+                this.tooltipY := Integer(savedY)
+            } else {
+                ; No saved position or invoked via button: start selection mode
+                ; Store the timer function
+                this.positionTimer := ObjBindMethod(this, "showPositionTooltip")
+                ; Start the instruction tooltip that follows mouse
+                SetTimer(this.positionTimer, 10)
+                ; Wait for click and get position
+                KeyWait "LButton", "D"
+                ; Clear the instruction tooltip and timer
+                SetTimer(this.positionTimer, 0)
+                ToolTip
+                ; Get the clicked position
+                CoordMode("Mouse", "Screen")
+                MouseGetPos(&clickX, &clickY)
+
+                ; Store clicked position
+                this.tooltipX := clickX
+                this.tooltipY := clickY
+
+                ; Persist chosen position to INI
+                IniWrite(this.tooltipX, A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipX")
+                IniWrite(this.tooltipY, A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "minimalTooltipY")
+                this.minimalTooltipSaved := true
+            }
+
             ; Enable minimal mode
             this.isMinimalMode := true
-            
-            ; Store clicked position
-            this.tooltipX := clickX
-            this.tooltipY := clickY
-            
+
             ; Set up click detection for tooltip
             try {
                 HotIf (*) => this.isMinimalMode
                 Hotkey("~LButton", ObjBindMethod(this, "checkTooltipClick"))
                 HotIf
             }
-            
+
             ; Ensure coordinate mode is set for the minimal tooltip
             CoordMode("ToolTip", "Screen")
-            
+
             ; Show initial tooltip
             this.updateMinimalTooltip()
         } else {
             ; Exit minimal mode
             this.isMinimalMode := false
-            
+
             ; Show the main GUI
             this.dpasteGui.Show()
-            
+
             ; Remove tooltip
             ToolTip
-            
+
             ; Try to remove the hotkey
             try {
                 Hotkey("~LButton", "Off")
@@ -1085,25 +1112,101 @@ handleTreeViewDoubleClick(treeView) {
         }
     }
 
+    checkSuspendTooltipClick(*) {
+        if (!this.suspendTooltipActive)
+            return
+
+        ; Get mouse position
+        CoordMode("Mouse", "Screen")
+        MouseGetPos(&mouseX, &mouseY)
+
+        ; Check if click is within suspend tooltip area
+        if (mouseX >= this.suspendTooltipX && mouseX <= this.suspendTooltipX + this.suspendTooltipWidth &&
+            mouseY >= this.suspendTooltipY && mouseY <= this.suspendTooltipY + this.suspendTooltipHeight) {
+            ; If script is suspended, resume it
+            if (A_IsSuspended) {
+                Suspend
+                ; Clear suspend UI
+                this.handleSuspendChange(false)
+                ; Update status bar text back to normal
+                this.statusBar.SetText("`t`tNum* Disable Triggers - Ctrl+Num0/Dot Adjust Increment Amount - Num(/) Hide Settings - Alt+Num(+/-) Font Size",4)
+            }
+        }
+    }
+
     updateMinimalTooltip() {
         if (!this.isMinimalMode) {
             return
         }
-        
-        tooltipText := "Click here to exit minimal mode`n`n"
+
+        tooltipText := "Click here to exit minimal mode or press Ctrl + /`nClick the Toggle Minimal Mode button `nin main window to select a new position`n`n"
         Loop 9 {
             currentPos := this.currentPosition + A_Index
             if (currentPos <= this.curFile.contentArr.Length) {
-                tooltipText .= A_Index . ": " . this.curFile.contentArr[currentPos] . "`n"
+                ; Sanitize any internal newlines and trim very long text to avoid wide tooltips
+                contentLine := StrReplace(this.curFile.contentArr[currentPos], "`n", " ")
+                contentLine := StrReplace(contentLine, "`r", " ")
+                if (StrLen(contentLine) > this.tooltipLineLimit) {
+                    contentLine := SubStr(contentLine, 1, this.tooltipLineLimit - 3) . "..."
+                }
+                tooltipText .= A_Index . ": " . contentLine . "`n"
             }
         }
-        
-        tooltipText .= "`nNumPad 0/.: Navigate • NumPad 1-9: Paste"
-        
+
+        tooltipText .= "`nNumPad 0/dot: Navigate • NumPad 1-9: Paste"
+
         ; Show tooltip at fixed position
         CoordMode("ToolTip", "Screen")
         ToolTip tooltipText, this.tooltipX, this.tooltipY
     }  
+
+
+    ; Manage UI and tooltip when script suspend state changes
+    handleSuspendChange(isSuspended) {
+        if (isSuspended) {
+            ; Hide main GUI if visible and not already in minimal mode
+            if (this.dpasteGui && !this.isMinimalMode) {
+                try {
+                    this.dpasteGui.Hide()
+                    this.guiHiddenBySuspend := true
+                } catch {
+                    this.guiHiddenBySuspend := false
+                }
+            } else {
+                this.guiHiddenBySuspend := false
+            }
+
+            ; Position suspend tooltip at bottom-right of the screen and store bounds
+            CoordMode("ToolTip", "Screen")
+            sx := SysGet(78)
+            sy := SysGet(79)
+            posX := Round(sx - this.suspendTooltipWidth - 20)
+            posY := Round(sy - this.suspendTooltipHeight - 20)
+            this.suspendTooltipX := posX
+            this.suspendTooltipY := posY
+
+            ToolTip "DoctorPaster Alert!`n***************** SCRIPT SUSPENDED *****************`n`nHotkeys disabled. Press Num* to resume.`n`n", posX, posY
+            this.suspendTooltipActive := true
+        } else {
+            ; Clear suspend tooltip
+            ToolTip
+            this.suspendTooltipActive := false
+
+            ; Restore GUI if we hid it on suspend
+            if (this.guiHiddenBySuspend) {
+                try {
+                    this.dpasteGui.Show()
+                } catch {
+                }
+                this.guiHiddenBySuspend := false
+            }
+
+            ; If minimal mode is active, restore its tooltip
+            if (this.isMinimalMode) {
+                this.updateMinimalTooltip()
+            }
+        }
+    }
 
     checkShiftWheel(direction, *) {
         CoordMode("Mouse", "Client")
@@ -1527,6 +1630,9 @@ handleTreeViewDoubleClick(treeView) {
         IniWrite(this.dpasteGui["textScroll"].Value, iniPath, "UserSettings", "textScroll")
         IniWrite(this.currentPosition, iniPath, "UserSettings", "lastPosition")
         IniWrite(this.dpasteGui["WindowTransparency"].Value, iniPath, "UserSettings", "windowTransparency")
+        ; Save minimal tooltip position if set
+        IniWrite(this.tooltipX, iniPath, "UserSettings", "minimalTooltipX")
+        IniWrite(this.tooltipY, iniPath, "UserSettings", "minimalTooltipY")
         curWinSet := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "loadLastWinPos")
         curPosSet := IniRead(A_ScriptFullPath . ":Stream:$DATA", "UserSettings", "loadLastPosition")
         WinGetPos &X, &Y,,, this.guiHwnd 
@@ -1605,6 +1711,15 @@ MainGui.updateDisplay()
 ; Hotkey handlers
 #SuspendExempt
 ; Reload Script
+
+NumpadMult::
+{
+    Suspend
+    ; Notify the UI about suspend/resume so it can show/hide tooltips and GUI
+    MainGui.handleSuspendChange(A_IsSuspended)
+}
+#SuspendExempt false
+
 NumpadDiv::
 {
 MainGui.settingsToggle()
@@ -1612,19 +1727,8 @@ MainGui.settingsToggle()
 
 ^NumpadDiv::
 {
-MainGui.toggleMinimalMode
+MainGui.toggleMinimalMode(true)
 }
-
-NumpadMult::
-{
-    Suspend
-    if A_IsSuspended
-        MainGui.statusBar.SetText("`t****SCRIPT SUSPENDED****TRIGGERS DISABLED****PRESS Num* TO RESUME****",4)
-    else
-        MainGui.statusBar.SetText("`t`tNum* Disable Triggers - Ctrl+Num0/Dot Adjust Increment Amount - Num(/) Hide Settings - Alt+Num(+/-) Font Size",4)
-}
-#SuspendExempt false
-
 
 #HotIf !GetKeyState("Shift", "P")
 ^NumpadAdd:: {
